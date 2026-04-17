@@ -4,7 +4,7 @@ const joinBtn = document.getElementById('join-btn');
 const statusEl = document.getElementById('status');
 const disconnectBtn = document.getElementById('disconnect-btn');
 
-const API_URL = 'https://api.classcontrol.app';
+const API_URL = 'https://kask.onrender.com';
 
 function showStatus(msg, type) {
   statusEl.textContent = msg;

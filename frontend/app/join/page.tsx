@@ -2,17 +2,6 @@
 import { useState, useEffect, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 
-const APPS: [string, string][] = [
-  ['Notability', '📝'],
-  ['GoodNotes 5', '📓'],
-  ['Google Classroom', '📚'],
-  ['Safari', '🌐'],
-  ['Instagram', '📸'],
-  ['TikTok', '🎵'],
-  ['YouTube', '📺'],
-  ['Snapchat', '👻'],
-];
-
 function requestNotifPermission() {
   if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
     Notification.requestPermission();
@@ -32,25 +21,34 @@ function JoinContent() {
   const [status, setStatus] = useState<'idle' | 'connecting' | 'connected' | 'kicked'>('idle');
   const [errorMsg, setErrorMsg] = useState('');
   const [messages, setMessages] = useState<string[]>([]);
-  const [showShortcutSetup, setShowShortcutSetup] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+  const switchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     return () => wsRef.current?.close();
   }, []);
 
-  // Page Visibility API — detects app/tab switches on iPad and desktop Safari
+  // Page Visibility API — 2s grace period prevents false alerts from Safari URL bar / tab overview
   useEffect(() => {
     const handler = () => {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
       if (document.visibilityState === 'hidden') {
-        wsRef.current.send(JSON.stringify({ type: 'TAB_SWITCHED', timestamp: Date.now() }));
+        switchTimerRef.current = setTimeout(() => {
+          wsRef.current?.send(JSON.stringify({ type: 'TAB_SWITCHED', timestamp: Date.now() }));
+        }, 2000);
       } else {
+        if (switchTimerRef.current) {
+          clearTimeout(switchTimerRef.current);
+          switchTimerRef.current = null;
+        }
         wsRef.current.send(JSON.stringify({ type: 'TAB_RESTORED' }));
       }
     };
     document.addEventListener('visibilitychange', handler);
-    return () => document.removeEventListener('visibilitychange', handler);
+    return () => {
+      document.removeEventListener('visibilitychange', handler);
+      if (switchTimerRef.current) clearTimeout(switchTimerRef.current);
+    };
   }, []);
 
   const join = async () => {
@@ -119,12 +117,6 @@ function JoinContent() {
     );
   }
 
-  const apiBase = process.env.NEXT_PUBLIC_API_URL || 'https://kask.onrender.com';
-
-  function shortcutUrl(app: string, event: string) {
-    return `${apiBase}/shortcut?room_code=${code}&student_name=${encodeURIComponent(name)}&app=${encodeURIComponent(app)}&event=${event}`;
-  }
-
   if (status === 'connected') {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center gap-4 p-6">
@@ -137,49 +129,6 @@ function JoinContent() {
             📢 {m}
           </div>
         ))}
-
-        {/* App Monitoring Shortcuts */}
-        <div className="w-full max-w-sm">
-          <button
-            onClick={() => setShowShortcutSetup(s => !s)}
-            className="w-full text-sm py-2.5 px-4 bg-purple-50 text-purple-700 rounded-2xl border border-purple-200 font-medium hover:bg-purple-100 transition-colors"
-          >
-            📲 {showShortcutSetup ? 'Hide' : 'Set up'} App Monitoring
-          </button>
-
-          {showShortcutSetup && (
-            <div className="mt-3 bg-white rounded-2xl border border-purple-100 p-4 space-y-3">
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
-                <strong>First time only:</strong> Go to <strong>Settings → Shortcuts → Allow Untrusted Shortcuts</strong> and turn it on. If you don&apos;t see it, open the Shortcuts app and run any shortcut once first.
-              </div>
-              <p className="text-xs text-slate-500 leading-relaxed">
-                <strong>Step 1:</strong> Tap ↓ Opens and ↓ Closes for each app — downloads a shortcut for each.<br/>
-                <strong>Step 2:</strong> Shortcuts app: <strong>Automations → + → App → [pick app] → Opens → Run Shortcut → pick downloaded shortcut</strong>. Repeat for Closes.
-              </p>
-              <div className="divide-y divide-slate-50">
-                {APPS.map(([app, emoji]) => (
-                  <div key={app} className="flex items-center justify-between py-2">
-                    <span className="text-sm text-slate-700">{emoji} {app}</span>
-                    <div className="flex gap-1.5">
-                      <a
-                        href={shortcutUrl(app, 'opened')}
-                        className="text-xs px-2.5 py-1 bg-green-50 text-green-700 rounded-lg font-medium hover:bg-green-100"
-                      >
-                        ↓ Opens
-                      </a>
-                      <a
-                        href={shortcutUrl(app, 'closed')}
-                        className="text-xs px-2.5 py-1 bg-slate-100 text-slate-600 rounded-lg font-medium hover:bg-slate-200"
-                      >
-                        ↓ Closes
-                      </a>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
       </div>
     );
   }

@@ -4,18 +4,16 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import Response as FastAPIResponse
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from session_manager import SessionManager
 from models import CreateSessionResponse, SessionExistsResponse, AppEventRequest
-from utils import generate_room_code, generate_qr, generate_shortcut_plist
+from utils import generate_room_code, generate_qr
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
-API_PUBLIC_URL = os.getenv("API_PUBLIC_URL", "https://kask.onrender.com")
-ALLOWED_STUDENT_TYPES = {"TAB_SWITCHED", "TAB_RESTORED", "URL_CHANGED", "WORKING_IN_APP"}
+ALLOWED_STUDENT_TYPES = {"TAB_SWITCHED", "TAB_RESTORED", "URL_CHANGED"}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -98,19 +96,6 @@ async def _process_app_event(room_code: str, student_name: str, app: str, event:
 
     return {"ok": True}
 
-
-@app.get("/shortcut")
-async def download_shortcut(room_code: str, student_name: str, app: str, event: str):
-    if event not in ("opened", "closed"):
-        return {"error": "event must be opened or closed"}
-    plist_data = generate_shortcut_plist(room_code, student_name, app, event, API_PUBLIC_URL)
-    safe_app = app.replace(" ", "_")
-    filename = f"CC_{safe_app}_{event}.shortcut"
-    return FastAPIResponse(
-        content=plist_data,
-        media_type="application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
-    )
 
 
 # ── WebSockets ───────────────────────────────────────────────────────────────
@@ -259,15 +244,6 @@ async def _handle_student_msg(data: dict, sid: str, name: str, session: dict):
 
     elif msg_type == "URL_CHANGED":
         student["last_url"] = str(data.get("url", ""))[:500]
-
-    elif msg_type == "WORKING_IN_APP":
-        student["status"] = "working"
-        if teacher_ws:
-            await _safe_send(teacher_ws, {
-                "type": "STUDENT_WORKING",
-                "student_id": sid,
-                "name": name
-            })
 
 
 async def _broadcast_students(session: dict, message: dict):
