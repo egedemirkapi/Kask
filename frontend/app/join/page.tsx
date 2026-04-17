@@ -149,9 +149,12 @@ function JoinContent() {
 
           {showShortcutSetup && (
             <div className="mt-3 bg-white rounded-2xl border border-purple-100 p-4 space-y-3">
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
+                <strong>First time only:</strong> Go to <strong>Settings → Shortcuts → Allow Untrusted Shortcuts</strong> and turn it on. If you don&apos;t see it, open the Shortcuts app and run any shortcut once first.
+              </div>
               <p className="text-xs text-slate-500 leading-relaxed">
-                <strong>Step 1:</strong> Tap ↓ Opens and ↓ Closes for each app you use — each downloads a shortcut.<br/>
-                <strong>Step 2:</strong> In the Shortcuts app: <strong>Automations → + → App → [pick app] → Opens → Run Shortcut → pick the shortcut you downloaded</strong>. Repeat for Closes.
+                <strong>Step 1:</strong> Tap ↓ Opens and ↓ Closes for each app — downloads a shortcut for each.<br/>
+                <strong>Step 2:</strong> Shortcuts app: <strong>Automations → + → App → [pick app] → Opens → Run Shortcut → pick downloaded shortcut</strong>. Repeat for Closes.
               </p>
               <div className="divide-y divide-slate-50">
                 {APPS.map(([app, emoji]) => (
