@@ -39,7 +39,7 @@ sessions = SessionManager()
 # ── REST ────────────────────────────────────────────────────────────────────
 
 @app.post("/session/create", response_model=CreateSessionResponse)
-@limiter.limit("10/hour")
+@limiter.limit("60/hour")
 async def create_session(request: Request):
     room_code = generate_room_code()
     join_url = f"{FRONTEND_URL}/join?code={room_code}"
