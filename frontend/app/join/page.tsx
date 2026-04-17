@@ -2,6 +2,18 @@
 import { useState, useEffect, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 
+function requestNotifPermission() {
+  if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+}
+
+function fireNotification(title: string, body: string) {
+  if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+    new Notification(title, { body, icon: '/icon.png', tag: 'classcontrol-msg' });
+  }
+}
+
 function JoinContent() {
   const params = useSearchParams();
   const [name, setName] = useState('');
@@ -15,7 +27,7 @@ function JoinContent() {
     return () => wsRef.current?.close();
   }, []);
 
-  // Page Visibility API — fires when student switches apps or tabs on iPad
+  // Page Visibility API — detects app/tab switches on iPad and desktop Safari
   useEffect(() => {
     const handler = () => {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
@@ -36,6 +48,9 @@ function JoinContent() {
     setStatus('connecting');
     setErrorMsg('');
 
+    // Request OS notification permission when student joins
+    requestNotifPermission();
+
     const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000';
     const ws = new WebSocket(`${wsUrl}/ws/student/${code}`);
     wsRef.current = ws;
@@ -54,12 +69,16 @@ function JoinContent() {
         } else if (data.type === 'LOCK_URL' && data.url) {
           window.location.href = data.url;
         } else if (data.type === 'MESSAGE') {
+          // Fire OS notification — works even when screen is off / app is backgrounded
+          fireNotification('📢 Message from Teacher', data.text);
           setMessages(m => [...m.slice(-4), data.text]);
           setTimeout(() => setMessages(m => m.slice(1)), 8000);
         } else if (data.type === 'KICKED') {
+          fireNotification('ClassControl', 'Your teacher has removed you from the session.');
           setStatus('kicked');
           ws.close();
         } else if (data.type === 'SESSION_ENDED') {
+          fireNotification('ClassControl', 'The session has ended.');
           setStatus('idle');
           setMessages([]);
           ws.close();

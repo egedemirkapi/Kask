@@ -1,24 +1,96 @@
 const API_URL = 'https://api.classcontrol.app';
-const WS_URL = 'wss://api.classcontrol.app';
+const WS_URL = 'wss://kask.onrender.com';
 
 let ws = null;
 let studentId = null;
 let sessionCode = null;
 let isConnected = false;
 
+// Track current rules so we can decide if a tab switch is "allowed"
+let currentWhitelist = [];
+let currentLockedUrl = null;
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function isUrlAllowed(url) {
+  if (!url) return false;
+  if (url.startsWith('chrome-extension://')) return true;
+  if (url.startsWith('chrome://')) return true;
+  if (url === 'about:blank') return true;
+
+  // If no restrictions are set, every URL triggers a switch alert
+  // (teacher wants full visibility when no rules active)
+  if (currentWhitelist.length === 0 && !currentLockedUrl) return false;
+
+  let hostname;
+  try { hostname = new URL(url).hostname; } catch { return false; }
+
+  if (currentLockedUrl) {
+    try {
+      const lockedHost = new URL(currentLockedUrl).hostname;
+      return hostname === lockedHost || hostname.endsWith('.' + lockedHost);
+    } catch { return false; }
+  }
+
+  return currentWhitelist.some(domain =>
+    hostname === domain || hostname.endsWith('.' + domain)
+  );
+}
+
+function sendToServer(msg) {
+  if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+}
+
+function showOsNotification(title, message) {
+  chrome.notifications.create('msg-' + Date.now(), {
+    type: 'basic',
+    iconUrl: 'icons/icon48.png',
+    title,
+    message,
+    priority: 2
+  });
+}
+
+function notifyActiveTab(message) {
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (tabs[0]?.id) chrome.tabs.sendMessage(tabs[0].id, message).catch(() => {});
+  });
+}
+
 // ── Tab & window monitoring ──────────────────────────────────────────────────
 
-chrome.tabs.onActivated.addListener(() => {
+chrome.tabs.onActivated.addListener(async (activeInfo) => {
   if (!isConnected) return;
-  sendToServer({ type: 'TAB_SWITCHED', student_id: studentId, timestamp: Date.now() });
+  try {
+    const tab = await chrome.tabs.get(activeInfo.tabId);
+    const url = tab.url || tab.pendingUrl || '';
+
+    if (isUrlAllowed(url)) {
+      // Student switched to an allowed site — restore status
+      sendToServer({ type: 'TAB_RESTORED', student_id: studentId });
+    } else {
+      sendToServer({ type: 'TAB_SWITCHED', student_id: studentId, timestamp: Date.now() });
+    }
+  } catch {
+    sendToServer({ type: 'TAB_SWITCHED', student_id: studentId, timestamp: Date.now() });
+  }
 });
 
 chrome.windows.onFocusChanged.addListener((windowId) => {
   if (!isConnected) return;
   if (windowId === chrome.windows.WINDOW_ID_NONE) {
+    // Chrome lost focus entirely — student switched to another app
     sendToServer({ type: 'TAB_SWITCHED', student_id: studentId, timestamp: Date.now() });
   } else {
-    sendToServer({ type: 'TAB_RESTORED', student_id: studentId });
+    // Chrome regained focus — check if active tab is allowed
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const url = tabs[0]?.url || '';
+      if (isUrlAllowed(url)) {
+        sendToServer({ type: 'TAB_RESTORED', student_id: studentId });
+      } else {
+        sendToServer({ type: 'TAB_SWITCHED', student_id: studentId, timestamp: Date.now() });
+      }
+    });
   }
 });
 
@@ -39,15 +111,14 @@ function connect(name, roomCode) {
   };
 
   ws.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data);
-      handleServerMessage(data);
-    } catch {}
+    try { handleServerMessage(JSON.parse(event.data)); } catch {}
   };
 
   ws.onclose = () => {
     isConnected = false;
     studentId = null;
+    currentWhitelist = [];
+    currentLockedUrl = null;
     clearAllRules();
     chrome.storage.local.set({ connected: false });
   };
@@ -64,38 +135,45 @@ function handleServerMessage(data) {
   switch (data.type) {
     case 'SESSION_RULES':
       isConnected = true;
+      currentWhitelist = data.rules.whitelist || [];
+      currentLockedUrl = data.rules.locked_url || null;
       chrome.storage.local.set({ connected: true, sessionCode });
-      if (data.rules.locked_url) {
-        applyLockUrl(data.rules.locked_url);
-      } else if (data.rules.whitelist && data.rules.whitelist.length > 0) {
-        applyWhitelist(data.rules.whitelist);
-      }
+      if (currentLockedUrl) applyLockUrl(currentLockedUrl);
+      else if (currentWhitelist.length > 0) applyWhitelist(currentWhitelist);
       break;
 
     case 'SET_WHITELIST':
-      applyWhitelist(data.urls);
+      currentWhitelist = data.urls || [];
+      currentLockedUrl = null;
+      applyWhitelist(currentWhitelist);
       break;
 
     case 'LOCK_URL':
-      if (data.url) applyLockUrl(data.url);
+      currentLockedUrl = data.url || null;
+      if (currentLockedUrl) applyLockUrl(currentLockedUrl);
       else clearAllRules();
       break;
 
     case 'MESSAGE':
+      // Native OS notification — shows even when Chrome is minimized
+      showOsNotification('📢 Teacher', data.text);
+      // Also show in-page banner
       notifyActiveTab({ type: 'SHOW_MESSAGE', text: data.text });
       break;
 
     case 'KICKED':
+      showOsNotification('ClassControl', 'Your teacher has removed you from the session.');
       notifyActiveTab({ type: 'SHOW_KICKED' });
       clearAllRules();
-      if (ws) ws.close();
+      ws?.close();
       chrome.storage.local.set({ connected: false });
       break;
 
     case 'SESSION_ENDED':
+      showOsNotification('ClassControl', 'The session has ended.');
       clearAllRules();
       chrome.storage.local.set({ connected: false });
-      if (ws) ws.close();
+      ws?.close();
       break;
   }
 }
@@ -103,13 +181,13 @@ function handleServerMessage(data) {
 // ── declarativeNetRequest rules ──────────────────────────────────────────────
 
 async function applyWhitelist(domains) {
-  if (!domains || domains.length === 0) {
-    await clearAllRules();
-    return;
-  }
-
   const existing = await chrome.declarativeNetRequest.getDynamicRules();
   const removeIds = existing.map(r => r.id);
+
+  if (!domains || domains.length === 0) {
+    await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: removeIds });
+    return;
+  }
 
   const blockRule = {
     id: 1,
@@ -139,10 +217,8 @@ async function applyLockUrl(url) {
   try { hostname = new URL(url).hostname; } catch { return; }
 
   const existing = await chrome.declarativeNetRequest.getDynamicRules();
-  const removeIds = existing.map(r => r.id);
-
   await chrome.declarativeNetRequest.updateDynamicRules({
-    removeRuleIds: removeIds,
+    removeRuleIds: existing.map(r => r.id),
     addRules: [{
       id: 1,
       priority: 1,
@@ -165,20 +241,6 @@ async function clearAllRules() {
   }
 }
 
-function notifyActiveTab(message) {
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    if (tabs[0]?.id) {
-      chrome.tabs.sendMessage(tabs[0].id, message).catch(() => {});
-    }
-  });
-}
-
-function sendToServer(msg) {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(msg));
-  }
-}
-
 // ── Popup message listener ───────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -187,7 +249,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ ok: true });
   } else if (message.type === 'DISCONNECT') {
     clearAllRules();
-    if (ws) ws.close();
+    ws?.close();
     chrome.storage.local.set({ connected: false });
     sendResponse({ ok: true });
   } else if (message.type === 'GET_STATUS') {
