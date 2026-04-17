@@ -3,16 +3,19 @@ import asyncio
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
+import os
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import Response as FastAPIResponse
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from session_manager import SessionManager
 from models import CreateSessionResponse, SessionExistsResponse, AppEventRequest
-from utils import generate_room_code, generate_qr
+from utils import generate_room_code, generate_qr, generate_shortcut_plist
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+API_PUBLIC_URL = os.getenv("API_PUBLIC_URL", "https://kask.onrender.com")
 ALLOWED_STUDENT_TYPES = {"TAB_SWITCHED", "TAB_RESTORED", "URL_CHANGED", "WORKING_IN_APP"}
 
 @asynccontextmanager
@@ -53,25 +56,34 @@ async def session_exists(room_code: str):
     return SessionExistsResponse(exists=sessions.exists(room_code))
 
 
+@app.get("/app-event")
+async def app_event_get(request: Request, room_code: str, student_name: str, app: str, event: str):
+    return await _process_app_event(room_code, student_name, app, event)
+
+
 @app.post("/app-event")
 @limiter.limit("60/minute")
 async def app_event(request: Request, data: AppEventRequest):
-    session = sessions.get(data.room_code)
+    return await _process_app_event(data.room_code, data.student_name, data.app, data.event)
+
+
+async def _process_app_event(room_code: str, student_name: str, app: str, event: str):
+    session = sessions.get(room_code)
     if not session:
         return {"ok": False, "error": "Session not found"}
 
     student_id = next(
         (sid for sid, s in session["students"].items()
-         if s["name"].lower() == data.student_name.lower()),
+         if s["name"].lower() == student_name.lower()),
         None
     )
     if not student_id:
         return {"ok": False, "error": "Student not found"}
 
     student = session["students"][student_id]
-    if data.event == "opened":
+    if event == "opened":
         student["status"] = "in_app"
-        student["current_app"] = data.app
+        student["current_app"] = app
     else:
         student["status"] = "active"
         student["current_app"] = None
@@ -80,12 +92,26 @@ async def app_event(request: Request, data: AppEventRequest):
         await _safe_send(session["teacher_ws"], {
             "type": "STUDENT_APP_EVENT",
             "student_id": student_id,
-            "name": data.student_name,
-            "app": data.app,
-            "event": data.event
+            "name": student_name,
+            "app": app,
+            "event": event
         })
 
     return {"ok": True}
+
+
+@app.get("/shortcut")
+async def download_shortcut(room_code: str, student_name: str, app: str, event: str):
+    if event not in ("opened", "closed"):
+        return {"error": "event must be opened or closed"}
+    plist_data = generate_shortcut_plist(room_code, student_name, app, event, API_PUBLIC_URL)
+    safe_app = app.replace(" ", "_")
+    filename = f"CC_{safe_app}_{event}.shortcut"
+    return FastAPIResponse(
+        content=plist_data,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
 
 
 # ── WebSockets ───────────────────────────────────────────────────────────────
