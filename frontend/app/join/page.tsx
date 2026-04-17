@@ -22,33 +22,23 @@ function JoinContent() {
   const [errorMsg, setErrorMsg] = useState('');
   const [messages, setMessages] = useState<string[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
-  const switchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     return () => wsRef.current?.close();
   }, []);
 
-  // Page Visibility API — 2s grace period prevents false alerts from Safari URL bar / tab overview
+  // Detect when student leaves the page (switches app, switches tab, locks screen)
   useEffect(() => {
-    const handler = () => {
+    const onVisibility = () => {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
       if (document.visibilityState === 'hidden') {
-        switchTimerRef.current = setTimeout(() => {
-          wsRef.current?.send(JSON.stringify({ type: 'TAB_SWITCHED', timestamp: Date.now() }));
-        }, 2000);
+        wsRef.current.send(JSON.stringify({ type: 'TAB_SWITCHED', timestamp: Date.now() }));
       } else {
-        if (switchTimerRef.current) {
-          clearTimeout(switchTimerRef.current);
-          switchTimerRef.current = null;
-        }
         wsRef.current.send(JSON.stringify({ type: 'TAB_RESTORED' }));
       }
     };
-    document.addEventListener('visibilitychange', handler);
-    return () => {
-      document.removeEventListener('visibilitychange', handler);
-      if (switchTimerRef.current) clearTimeout(switchTimerRef.current);
-    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
   }, []);
 
   const join = async () => {
