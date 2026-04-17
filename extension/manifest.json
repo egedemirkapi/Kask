@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "ClassControl",
+  "version": "1.0.0",
+  "description": "Connect to your teacher's classroom session",
+  "permissions": [
+    "tabs",
+    "webNavigation",
+    "storage",
+    "declarativeNetRequest",
+    "activeTab"
+  ],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "48": "icons/icon48.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "declarative_net_request": {
+    "rule_resources": []
+  }
+}

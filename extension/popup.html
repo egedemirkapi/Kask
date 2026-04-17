@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { width: 280px; padding: 16px; font-family: system-ui; margin: 0; }
+    h2 { margin: 0 0 12px; font-size: 16px; color: #1e293b; }
+    input {
+      width: 100%; box-sizing: border-box; padding: 8px 10px;
+      border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px;
+      margin-bottom: 8px; outline: none;
+    }
+    input:focus { border-color: #2563eb; }
+    button {
+      width: 100%; padding: 10px; background: #2563eb; color: white;
+      border: none; border-radius: 8px; cursor: pointer; font-size: 14px;
+      font-weight: 500;
+    }
+    button:hover { background: #1d4ed8; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    #status {
+      margin-top: 10px; padding: 8px 10px; border-radius: 8px;
+      font-size: 13px; display: none;
+    }
+    .connected { background: #dcfce7; color: #166534; }
+    .error { background: #fee2e2; color: #991b1b; }
+    .info { background: #eff6ff; color: #1e40af; }
+    #disconnect-btn { background: #dc2626; margin-top: 8px; display: none; }
+    #disconnect-btn:hover { background: #b91c1c; }
+  </style>
+</head>
+<body>
+  <h2>🎓 ClassControl</h2>
+  <div id="join-form">
+    <input id="name-input" placeholder="Your name" maxlength="30" />
+    <input id="code-input" placeholder="Room code (e.g. ABC123)" maxlength="6" />
+    <button id="join-btn">Join Session</button>
+  </div>
+  <div id="status"></div>
+  <button id="disconnect-btn">Leave Session</button>
+  <script src="popup.js"></script>
+</body>
+</html>
