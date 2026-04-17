@@ -27,18 +27,34 @@ function JoinContent() {
     return () => wsRef.current?.close();
   }, []);
 
-  // Detect when student leaves the page (switches app, switches tab, locks screen)
+  // Detect when student leaves — switches app, switches tab, navigates away
   useEffect(() => {
+    let switched = false;
+
     const onVisibility = () => {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
       if (document.visibilityState === 'hidden') {
+        switched = true;
         wsRef.current.send(JSON.stringify({ type: 'TAB_SWITCHED', timestamp: Date.now() }));
-      } else {
+      } else if (switched) {
+        // only restore if we actually reported a switch — prevents iOS false-restore quirk
+        switched = false;
         wsRef.current.send(JSON.stringify({ type: 'TAB_RESTORED' }));
       }
     };
+
+    // pagehide fires when student types a new URL in the same tab (visibilitychange doesn't)
+    const onPageHide = () => {
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+      wsRef.current.send(JSON.stringify({ type: 'TAB_SWITCHED', timestamp: Date.now() }));
+    };
+
     document.addEventListener('visibilitychange', onVisibility);
-    return () => document.removeEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', onPageHide);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', onPageHide);
+    };
   }, []);
 
   const join = async () => {
