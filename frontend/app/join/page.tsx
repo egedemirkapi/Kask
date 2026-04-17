@@ -110,7 +110,6 @@ function JoinContent() {
 
   const apiBase = process.env.NEXT_PUBLIC_API_URL || 'https://kask.onrender.com';
   const shortcutPayloadOpen = JSON.stringify({ room_code: code, student_name: name, app: 'APP_NAME', event: 'opened' }, null, 2);
-  const shortcutPayloadClose = JSON.stringify({ room_code: code, student_name: name, app: 'APP_NAME', event: 'closed' }, null, 2);
 
   if (status === 'connected') {
     return (
