@@ -107,6 +107,7 @@ export default function SessionPage({ params }: Props) {
           <div className="bg-white rounded-2xl p-6 text-center shadow-2xl" onClick={e => e.stopPropagation()}>
             <h3 className="font-bold text-lg mb-1">Scan to Join</h3>
             <p className="text-sm text-slate-400 mb-4">Room code: <strong>{code}</strong></p>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={decodeURIComponent(qrDataUrl)} alt="QR code" className="w-48 h-48 mx-auto" />
             <button onClick={() => setShowQR(false)} className="mt-4 text-sm text-slate-400 hover:text-slate-600">
               Close

@@ -79,7 +79,7 @@ function JoinContent() {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center gap-4 p-6">
         <div className="text-5xl">🚫</div>
-        <h1 className="text-xl font-bold text-slate-800">You've been removed</h1>
+        <h1 className="text-xl font-bold text-slate-800">You&apos;ve been removed</h1>
         <p className="text-slate-500 text-sm">Your teacher ended your session access.</p>
         <button onClick={() => setStatus('idle')} className="text-blue-600 text-sm underline">
           Try joining again
