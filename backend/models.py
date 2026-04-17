@@ -9,3 +9,10 @@ class CreateSessionResponse(BaseModel):
 
 class SessionExistsResponse(BaseModel):
     exists: bool
+
+
+class AppEventRequest(BaseModel):
+    room_code: str
+    student_name: str
+    app: str
+    event: str  # "opened" or "closed"

@@ -9,11 +9,11 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from session_manager import SessionManager
-from models import CreateSessionResponse, SessionExistsResponse
+from models import CreateSessionResponse, SessionExistsResponse, AppEventRequest
 from utils import generate_room_code, generate_qr
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
-ALLOWED_STUDENT_TYPES = {"TAB_SWITCHED", "TAB_RESTORED", "URL_CHANGED"}
+ALLOWED_STUDENT_TYPES = {"TAB_SWITCHED", "TAB_RESTORED", "URL_CHANGED", "WORKING_IN_APP"}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -53,6 +53,41 @@ async def session_exists(room_code: str):
     return SessionExistsResponse(exists=sessions.exists(room_code))
 
 
+@app.post("/app-event")
+@limiter.limit("60/minute")
+async def app_event(request: Request, data: AppEventRequest):
+    session = sessions.get(data.room_code)
+    if not session:
+        return {"ok": False, "error": "Session not found"}
+
+    student_id = next(
+        (sid for sid, s in session["students"].items()
+         if s["name"].lower() == data.student_name.lower()),
+        None
+    )
+    if not student_id:
+        return {"ok": False, "error": "Student not found"}
+
+    student = session["students"][student_id]
+    if data.event == "opened":
+        student["status"] = "in_app"
+        student["current_app"] = data.app
+    else:
+        student["status"] = "active"
+        student["current_app"] = None
+
+    if session.get("teacher_ws"):
+        await _safe_send(session["teacher_ws"], {
+            "type": "STUDENT_APP_EVENT",
+            "student_id": student_id,
+            "name": data.student_name,
+            "app": data.app,
+            "event": data.event
+        })
+
+    return {"ok": True}
+
+
 # ── WebSockets ───────────────────────────────────────────────────────────────
 
 @app.websocket("/ws/teacher/{room_code}")
@@ -69,7 +104,8 @@ async def teacher_ws(websocket: WebSocket, room_code: str):
         "type": "SESSION_STATE",
         "students": [
             {"id": sid, "name": s["name"], "device": s["device"],
-             "status": s["status"], "last_url": s["last_url"]}
+             "status": s["status"], "last_url": s["last_url"],
+             "current_app": s.get("current_app")}
             for sid, s in session["students"].items()
         ],
         "rules": session["rules"]
@@ -145,6 +181,7 @@ async def student_ws(websocket: WebSocket, room_code: str):
         "device": device,
         "status": "active",
         "last_url": None,
+        "current_app": None,
         "joined_at": datetime.utcnow().timestamp()
     }
 
@@ -153,7 +190,7 @@ async def student_ws(websocket: WebSocket, room_code: str):
     if session["teacher_ws"]:
         await _safe_send(session["teacher_ws"], {
             "type": "STUDENT_JOINED",
-            "student": {"id": sid, "name": name, "device": device, "status": "active", "last_url": None}
+            "student": {"id": sid, "name": name, "device": device, "status": "active", "last_url": None, "current_app": None}
         })
 
     try:
@@ -197,6 +234,15 @@ async def _handle_student_msg(data: dict, sid: str, name: str, session: dict):
 
     elif msg_type == "URL_CHANGED":
         student["last_url"] = str(data.get("url", ""))[:500]
+
+    elif msg_type == "WORKING_IN_APP":
+        student["status"] = "working"
+        if teacher_ws:
+            await _safe_send(teacher_ws, {
+                "type": "STUDENT_WORKING",
+                "student_id": sid,
+                "name": name
+            })
 
 
 async def _broadcast_students(session: dict, message: dict):

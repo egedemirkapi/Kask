@@ -4,8 +4,20 @@ import { Student } from '@/hooks/useTeacherSession';
 const STATUS_CONFIG = {
   active:       { dot: 'bg-green-500',  label: 'Active',       ring: 'ring-green-200',  bg: 'bg-white' },
   switched:     { dot: 'bg-yellow-400', label: 'Switched',     ring: 'ring-yellow-300', bg: 'bg-yellow-50' },
-  disconnected: { dot: 'bg-red-500',    label: 'Disconnected', ring: 'ring-red-200',    bg: 'bg-red-50' }
+  disconnected: { dot: 'bg-red-500',    label: 'Disconnected', ring: 'ring-red-200',    bg: 'bg-red-50' },
+  in_app:       { dot: 'bg-purple-500', label: 'In App',       ring: 'ring-purple-200', bg: 'bg-purple-50' }
 };
+
+const APP_EMOJIS: Record<string, string> = {
+  'notability': '📝', 'goodnotes': '📓', 'google classroom': '📚',
+  'safari': '🌐', 'instagram': '📸', 'tiktok': '🎵', 'youtube': '📺',
+  'messages': '💬', 'snapchat': '👻', 'twitter': '🐦', 'x': '🐦',
+  'chrome': '🌐', 'gmail': '📧', 'discord': '💬', 'spotify': '🎵'
+};
+
+function appEmoji(name: string): string {
+  return APP_EMOJIS[name.toLowerCase()] ?? '📱';
+}
 
 interface Props {
   student: Student;
@@ -24,7 +36,11 @@ export function StudentCard({ student, onMessage, onKick }: Props) {
           {student.device === 'chrome' ? '💻' : '📱'}
         </span>
       </div>
-      <div className="text-xs text-slate-400">{cfg.label}</div>
+      <div className="text-xs text-slate-400">
+        {student.status === 'in_app' && student.current_app
+          ? <span className="font-medium text-purple-600">{appEmoji(student.current_app)} {student.current_app}</span>
+          : cfg.label}
+      </div>
       {student.status !== 'disconnected' && (
         <div className="flex gap-1 mt-1">
           <button

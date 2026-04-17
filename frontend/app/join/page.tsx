@@ -21,6 +21,7 @@ function JoinContent() {
   const [status, setStatus] = useState<'idle' | 'connecting' | 'connected' | 'kicked'>('idle');
   const [errorMsg, setErrorMsg] = useState('');
   const [messages, setMessages] = useState<string[]>([]);
+  const [showShortcutSetup, setShowShortcutSetup] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
@@ -107,6 +108,10 @@ function JoinContent() {
     );
   }
 
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || 'https://kask.onrender.com';
+  const shortcutPayloadOpen = JSON.stringify({ room_code: code, student_name: name, app: 'APP_NAME', event: 'opened' }, null, 2);
+  const shortcutPayloadClose = JSON.stringify({ room_code: code, student_name: name, app: 'APP_NAME', event: 'closed' }, null, 2);
+
   if (status === 'connected') {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center gap-4 p-6">
@@ -119,6 +124,34 @@ function JoinContent() {
             📢 {m}
           </div>
         ))}
+
+        {/* iOS App Monitoring Setup */}
+        <div className="w-full max-w-sm">
+          <button
+            onClick={() => setShowShortcutSetup(s => !s)}
+            className="w-full text-sm py-2.5 px-4 bg-purple-50 text-purple-700 rounded-2xl border border-purple-200 font-medium hover:bg-purple-100 transition-colors"
+          >
+            📲 {showShortcutSetup ? 'Hide' : 'Set up'} iPad App Monitoring
+          </button>
+
+          {showShortcutSetup && (
+            <div className="mt-3 bg-white rounded-2xl border border-purple-100 p-4 text-sm text-slate-700 space-y-3">
+              <p className="font-semibold text-purple-700">Let your teacher see which apps you&apos;re using</p>
+              <ol className="list-decimal list-inside space-y-2 text-slate-600">
+                <li>Open the <strong>Shortcuts</strong> app on your iPad</li>
+                <li>Tap <strong>Automation</strong> → <strong>+</strong> → <strong>App</strong></li>
+                <li>Choose an app (e.g. Notability), tick <strong>Opens</strong> and <strong>Closes</strong></li>
+                <li>Add action: <strong>Get Contents of URL</strong></li>
+                <li>Set URL to: <code className="bg-slate-100 px-1 rounded text-xs break-all">{apiBase}/app-event</code></li>
+                <li>Method: <strong>POST</strong>, Body: <strong>JSON</strong></li>
+                <li>For <em>Opens</em>, paste this body (replace APP_NAME with the actual app name):</li>
+              </ol>
+              <pre className="bg-slate-100 rounded-lg p-2 text-xs overflow-x-auto whitespace-pre-wrap break-all">{shortcutPayloadOpen}</pre>
+              <p className="text-slate-500 text-xs">For <em>Closes</em>, use the same but with <code className="bg-slate-100 px-1 rounded">&#34;event&#34;: &#34;closed&#34;</code></p>
+              <p className="text-slate-400 text-xs">Repeat for each app you use in class. Your name and room code are already filled in above.</p>
+            </div>
+          )}
+        </div>
       </div>
     );
   }

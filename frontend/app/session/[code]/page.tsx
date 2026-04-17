@@ -122,10 +122,12 @@ export default function SessionPage({ params }: Props) {
           <div
             key={a.id}
             className={`px-4 py-2.5 rounded-xl shadow-lg text-sm font-medium flex items-center gap-2 animate-in slide-in-from-right ${
-              a.type === 'offline' ? 'bg-red-600 text-white' : 'bg-yellow-400 text-yellow-900'
+              a.type === 'offline' ? 'bg-red-600 text-white' :
+              a.type === 'app'     ? 'bg-purple-600 text-white' :
+                                     'bg-yellow-400 text-yellow-900'
             }`}
           >
-            {a.type === 'offline' ? '🔴' : '⚠️'} {a.message}
+            {a.type === 'offline' ? '🔴' : a.type === 'app' ? '📱' : '⚠️'} {a.message}
           </div>
         ))}
       </div>

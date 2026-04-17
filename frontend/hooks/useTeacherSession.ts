@@ -5,9 +5,10 @@ export interface Student {
   id: string;
   name: string;
   device: 'chrome' | 'safari';
-  status: 'active' | 'switched' | 'disconnected';
+  status: 'active' | 'switched' | 'disconnected' | 'in_app';
   last_url?: string;
   switched_at?: number;
+  current_app?: string;
 }
 
 interface SessionRules {
@@ -24,7 +25,7 @@ interface SessionState {
 export interface Alert {
   id: string;
   message: string;
-  type: 'switched' | 'offline';
+  type: 'switched' | 'offline' | 'app';
 }
 
 export function useTeacherSession(roomCode: string) {
@@ -76,6 +77,29 @@ export function useTeacherSession(roomCode: string) {
       }));
       addAlert(`${name} switched screens`, 'switched');
     } else if (type === 'STUDENT_RESTORED') {
+      const sid = data.student_id as string;
+      setState(s => ({
+        ...s,
+        students: { ...s.students, [sid]: { ...s.students[sid], status: 'active' } }
+      }));
+    } else if (type === 'STUDENT_APP_EVENT') {
+      const sid = data.student_id as string;
+      const app = data.app as string;
+      const event = data.event as string;
+      const name = data.name as string;
+      setState(s => ({
+        ...s,
+        students: {
+          ...s.students,
+          [sid]: {
+            ...s.students[sid],
+            status: event === 'opened' ? 'in_app' : 'active',
+            current_app: event === 'opened' ? app : undefined
+          }
+        }
+      }));
+      if (event === 'opened') addAlert(`${name} opened ${app}`, 'app');
+    } else if (type === 'STUDENT_WORKING') {
       const sid = data.student_id as string;
       setState(s => ({
         ...s,
