@@ -3,7 +3,6 @@ import asyncio
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
-import os
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response as FastAPIResponse
 from fastapi.middleware.cors import CORSMiddleware
