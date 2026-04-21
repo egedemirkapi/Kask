@@ -3,14 +3,29 @@ import asyncio
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from session_manager import SessionManager
-from models import CreateSessionResponse, SessionExistsResponse, AppEventRequest
+from models import (
+    CreateSessionResponse,
+    SessionExistsResponse,
+    AppEventRequest,
+    DnsStatusResponse,
+    DnsLogsResponse,
+    DnsLogEntry,
+    AddAllowedDomainRequest,
+    ManualProfileRequest,
+    ManualProfileResponse,
+)
+import re
+
+PROFILE_ID_RE = re.compile(r"^[a-z0-9]{6,12}$", re.IGNORECASE)
 from utils import generate_room_code, generate_qr
+import nextdns_service
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 ALLOWED_STUDENT_TYPES = {"TAB_SWITCHED", "TAB_RESTORED", "URL_CHANGED"}
@@ -45,7 +60,109 @@ async def create_session(request: Request):
     join_url = f"{FRONTEND_URL}/join?code={room_code}"
     qr_data_url = generate_qr(join_url)
     sessions.create(room_code)
-    return CreateSessionResponse(room_code=room_code, qr_data_url=qr_data_url)
+
+    profile_id = await nextdns_service.create_profile(room_code)
+    if profile_id:
+        sessions.get(room_code)["nextdns_profile_id"] = profile_id
+
+    return CreateSessionResponse(
+        room_code=room_code,
+        qr_data_url=qr_data_url,
+        ipad_monitoring_enabled=profile_id is not None,
+    )
+
+
+@app.get("/session/{room_code}/dns/status", response_model=DnsStatusResponse)
+async def dns_status(room_code: str):
+    session = sessions.get(room_code)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    profile_id = session.get("nextdns_profile_id")
+    return DnsStatusResponse(
+        enabled=profile_id is not None,
+        profile_id=profile_id,
+        blocked_categories=nextdns_service.DEFAULT_BLOCKED_CATEGORIES if profile_id else [],
+    )
+
+
+@app.get("/session/{room_code}/dns/profile.mobileconfig")
+async def dns_profile_download(room_code: str):
+    session = sessions.get(room_code)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    profile_id = session.get("nextdns_profile_id")
+    if not profile_id:
+        raise HTTPException(
+            status_code=503,
+            detail="iPad monitoring not configured. Set NEXTDNS_API_KEY on the backend.",
+        )
+    payload = nextdns_service.build_mobileconfig(profile_id, room_code)
+    return Response(
+        content=payload,
+        media_type="application/x-apple-aspen-config",
+        headers={
+            "Content-Disposition": f'attachment; filename="ClassControl-{room_code}.mobileconfig"',
+        },
+    )
+
+
+@app.get("/session/{room_code}/dns/logs", response_model=DnsLogsResponse)
+@limiter.limit("60/minute")
+async def dns_logs(request: Request, room_code: str, limit: int = 50):
+    session = sessions.get(room_code)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    profile_id = session.get("nextdns_profile_id")
+    if not profile_id:
+        return DnsLogsResponse(enabled=False, logs=[])
+
+    raw = await nextdns_service.fetch_recent_logs(profile_id, limit=limit)
+    logs = [
+        DnsLogEntry(
+            domain=entry.get("domain", ""),
+            timestamp=entry.get("timestamp", ""),
+            status=entry.get("status", "default"),
+            device_name=entry.get("deviceName"),
+        )
+        for entry in raw
+        if entry.get("domain")
+    ]
+    return DnsLogsResponse(enabled=True, logs=logs)
+
+
+@app.post("/session/{room_code}/dns/manual-profile", response_model=ManualProfileResponse)
+@limiter.limit("20/minute")
+async def dns_manual_profile(request: Request, room_code: str, body: ManualProfileRequest):
+    """Attach a NextDNS profile ID to this session manually.
+
+    Lets a teacher use their own free NextDNS account without the backend
+    needing an API key. Logs won't auto-stream (that needs the API key) but
+    the .mobileconfig download works and iPads route through that profile.
+    """
+    session = sessions.get(room_code)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    pid = body.profile_id.strip().lower()
+    if not PROFILE_ID_RE.match(pid):
+        raise HTTPException(
+            status_code=400,
+            detail="Profile ID looks wrong. It should be 6-12 letters/numbers (e.g. 'abc123').",
+        )
+    session["nextdns_profile_id"] = pid
+    return ManualProfileResponse(ok=True, profile_id=pid)
+
+
+@app.post("/session/{room_code}/dns/allow")
+@limiter.limit("30/minute")
+async def dns_allow(request: Request, room_code: str, body: AddAllowedDomainRequest):
+    session = sessions.get(room_code)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    profile_id = session.get("nextdns_profile_id")
+    if not profile_id:
+        raise HTTPException(status_code=503, detail="iPad monitoring not configured")
+    ok = await nextdns_service.add_allowed_domain(profile_id, body.domain.strip().lower())
+    return {"ok": ok}
 
 
 @app.get("/session/{room_code}/exists", response_model=SessionExistsResponse)
@@ -159,7 +276,7 @@ async def _handle_teacher_msg(data: dict, room_code: str, session: dict):
         await _broadcast_students(session, {"type": "SESSION_ENDED"})
         for s in list(session["students"].values()):
             await _safe_close(s["ws"])
-        sessions.delete(room_code)
+        await sessions.delete(room_code)
 
 
 @app.websocket("/ws/student/{room_code}")

@@ -180,35 +180,63 @@ function handleServerMessage(data) {
 
 // ── declarativeNetRequest rules ──────────────────────────────────────────────
 
-async function applyWhitelist(domains) {
+function hostMatchesAllowed(hostname, allowed) {
+  return allowed.some(d => hostname === d || hostname.endsWith('.' + d));
+}
+
+function tabIsControllable(tab) {
+  if (!tab?.url) return false;
+  return tab.url.startsWith('http://') || tab.url.startsWith('https://');
+}
+
+async function safeUpdateRules(spec, label) {
+  try {
+    await chrome.declarativeNetRequest.updateDynamicRules(spec);
+  } catch (e) {
+    console.error('[ClassControl] rule update failed:', label, e);
+    showOsNotification('ClassControl error', `Could not apply ${label}: ${e.message}`);
+  }
+}
+
+async function applyWhitelist(rawDomains) {
+  const domains = (rawDomains || []).map(d =>
+    d.replace(/^https?:\/\//, '').replace(/\/.*$/, '').toLowerCase()
+  );
   const existing = await chrome.declarativeNetRequest.getDynamicRules();
   const removeIds = existing.map(r => r.id);
 
-  if (!domains || domains.length === 0) {
-    await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: removeIds });
+  if (domains.length === 0) {
+    await safeUpdateRules({ removeRuleIds: removeIds }, 'clear whitelist');
     return;
   }
 
+  const blockedRedirect = chrome.runtime.getURL('blocked.html');
   const blockRule = {
     id: 1,
     priority: 1,
-    action: { type: 'redirect', redirect: { extensionPath: '/blocked.html' } },
-    condition: { resourceTypes: ['main_frame'], urlFilter: '|https://*' }
+    action: { type: 'redirect', redirect: { url: blockedRedirect } },
+    condition: { resourceTypes: ['main_frame'], urlFilter: '*' }
   };
-
   const allowRules = domains.map((domain, i) => ({
     id: 100 + i,
     priority: 2,
     action: { type: 'allow' },
-    condition: {
-      requestDomains: [domain.replace(/^https?:\/\//, '').replace(/\/$/, '')],
-      resourceTypes: ['main_frame']
-    }
+    condition: { requestDomains: [domain], resourceTypes: ['main_frame'] }
   }));
 
-  await chrome.declarativeNetRequest.updateDynamicRules({
-    removeRuleIds: removeIds,
-    addRules: [blockRule, ...allowRules]
+  await safeUpdateRules({ removeRuleIds: removeIds, addRules: [blockRule, ...allowRules] }, 'whitelist');
+
+  // Actively redirect any currently-open tabs that aren't on an allowed domain
+  chrome.tabs.query({}, (tabs) => {
+    for (const tab of tabs) {
+      if (!tabIsControllable(tab)) continue;
+      try {
+        const host = new URL(tab.url).hostname;
+        if (!hostMatchesAllowed(host, domains)) {
+          chrome.tabs.update(tab.id, { url: blockedRedirect }).catch(() => {});
+        }
+      } catch { /* malformed URL */ }
+    }
   });
 }
 
@@ -217,7 +245,7 @@ async function applyLockUrl(url) {
   try { hostname = new URL(url).hostname; } catch { return; }
 
   const existing = await chrome.declarativeNetRequest.getDynamicRules();
-  await chrome.declarativeNetRequest.updateDynamicRules({
+  await safeUpdateRules({
     removeRuleIds: existing.map(r => r.id),
     addRules: [{
       id: 1,
@@ -225,10 +253,25 @@ async function applyLockUrl(url) {
       action: { type: 'redirect', redirect: { url } },
       condition: {
         resourceTypes: ['main_frame'],
-        urlFilter: '|https://*',
+        urlFilter: '*',
         excludedRequestDomains: [hostname]
       }
     }]
+  }, 'lock URL');
+
+  // Force every open tab to the locked URL immediately
+  chrome.tabs.query({}, (tabs) => {
+    for (const tab of tabs) {
+      if (!tabIsControllable(tab)) continue;
+      try {
+        const tabHost = new URL(tab.url).hostname;
+        if (tabHost !== hostname && !tabHost.endsWith('.' + hostname)) {
+          chrome.tabs.update(tab.id, { url }).catch(() => {});
+        }
+      } catch {
+        chrome.tabs.update(tab.id, { url }).catch(() => {});
+      }
+    }
   });
 }
 
