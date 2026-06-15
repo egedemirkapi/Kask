@@ -6,14 +6,38 @@ import { ArrowRight, Laptop, Smartphone, ShieldCheck } from 'lucide-react';
 export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const router = useRouter();
 
   const createSession = async () => {
     setLoading(true);
     setError('');
+    setNotice('');
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
+    // The free backend sleeps when idle and can take ~30s to wake up, so give
+    // the request a generous timeout and retry once before reporting failure.
+    const attempt = async (): Promise<Response> => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 60000);
+      try {
+        return await fetch(`${apiUrl}/session/create`, {
+          method: 'POST',
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      const res = await fetch(`${apiUrl}/session/create`, { method: 'POST' });
+      let res: Response;
+      try {
+        res = await attempt();
+      } catch {
+        setNotice('Waking up the server… this can take up to a minute on first use.');
+        res = await attempt();
+      }
       if (!res.ok) throw new Error('Failed');
       const data = await res.json();
       const params = new URLSearchParams({
@@ -22,7 +46,8 @@ export default function Home() {
       });
       router.push(`/session/${data.room_code}?${params.toString()}`);
     } catch {
-      setError('Could not create session. Is the backend running?');
+      setNotice('');
+      setError('Could not create session — the backend may be asleep or unreachable. Wait a moment and try again.');
       setLoading(false);
     }
   };
@@ -55,6 +80,9 @@ export default function Home() {
           )}
         </button>
 
+        {notice && !error && (
+          <p className="text-[13px] text-slate-500 mt-3 text-center">{notice}</p>
+        )}
         {error && (
           <p className="text-[13px] text-rose-600 mt-3 text-center">{error}</p>
         )}

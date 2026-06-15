@@ -9,6 +9,7 @@ Falls back gracefully when NEXTDNS_API_KEY is unset — endpoints return a clear
 "unconfigured" status so the frontend can show setup instructions.
 """
 
+import asyncio
 import os
 import plistlib
 from typing import Optional
@@ -76,28 +77,27 @@ async def create_profile(room_code: str) -> Optional[str]:
 
 
 async def _apply_default_rules(client: httpx.AsyncClient, profile_id: str) -> None:
-    """Block distracting categories and services by default."""
+    """Block distracting categories and services by default.
+
+    All rule calls run concurrently (instead of ~15 sequential round trips)
+    so provisioning completes in roughly the time of a single request.
+    """
     base = f"{NEXTDNS_API_BASE}/profiles/{profile_id}"
 
-    for category in DEFAULT_BLOCKED_CATEGORIES:
+    async def _post(path: str, body: dict) -> None:
         try:
-            await client.post(
-                f"{base}/parentalcontrol/categories",
-                headers=_headers(),
-                json={"id": category, "active": True},
-            )
+            await client.post(f"{base}/{path}", headers=_headers(), json=body)
         except httpx.HTTPError:
             pass
 
-    for service in DEFAULT_BLOCKED_SERVICES:
-        try:
-            await client.post(
-                f"{base}/parentalcontrol/services",
-                headers=_headers(),
-                json={"id": service, "active": True},
-            )
-        except httpx.HTTPError:
-            pass
+    tasks = [
+        _post("parentalcontrol/categories", {"id": category, "active": True})
+        for category in DEFAULT_BLOCKED_CATEGORIES
+    ] + [
+        _post("parentalcontrol/services", {"id": service, "active": True})
+        for service in DEFAULT_BLOCKED_SERVICES
+    ]
+    await asyncio.gather(*tasks)
 
 
 async def delete_profile(profile_id: str) -> None:

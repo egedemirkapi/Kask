@@ -1,3 +1,5 @@
+import asyncio
+
 from session_manager import SessionManager
 
 
@@ -15,7 +17,7 @@ def test_missing_session():
 def test_delete_session():
     sm = SessionManager()
     sm.create("ABC123")
-    sm.delete("ABC123")
+    asyncio.run(sm.delete("ABC123"))
     assert not sm.exists("ABC123")
 
 

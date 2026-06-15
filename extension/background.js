@@ -1,4 +1,3 @@
-const API_URL = 'https://api.classcontrol.app';
 const WS_URL = 'wss://kask.onrender.com';
 
 let ws = null;

@@ -53,6 +53,12 @@ sessions = SessionManager()
 
 # ── REST ────────────────────────────────────────────────────────────────────
 
+@app.get("/health")
+async def health():
+    """Lightweight endpoint for uptime pingers to keep the instance warm."""
+    return {"ok": True}
+
+
 @app.post("/session/create", response_model=CreateSessionResponse)
 @limiter.limit("60/hour")
 async def create_session(request: Request):
@@ -61,15 +67,26 @@ async def create_session(request: Request):
     qr_data_url = generate_qr(join_url)
     sessions.create(room_code)
 
-    profile_id = await nextdns_service.create_profile(room_code)
-    if profile_id:
-        sessions.get(room_code)["nextdns_profile_id"] = profile_id
+    # Provision the NextDNS profile in the background so the teacher isn't
+    # blocked on ~16 sequential NextDNS API calls (which can take many seconds
+    # or hang). The session is usable immediately; iPad monitoring flips on a
+    # moment later once the profile is ready.
+    monitoring_pending = nextdns_service.is_configured()
+    if monitoring_pending:
+        asyncio.create_task(_provision_nextdns(room_code))
 
     return CreateSessionResponse(
         room_code=room_code,
         qr_data_url=qr_data_url,
-        ipad_monitoring_enabled=profile_id is not None,
+        ipad_monitoring_enabled=monitoring_pending,
     )
+
+
+async def _provision_nextdns(room_code: str) -> None:
+    profile_id = await nextdns_service.create_profile(room_code)
+    session = sessions.get(room_code)
+    if session is not None and profile_id:
+        session["nextdns_profile_id"] = profile_id
 
 
 @app.get("/session/{room_code}/dns/status", response_model=DnsStatusResponse)
@@ -91,6 +108,14 @@ async def dns_profile_download(room_code: str):
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     profile_id = session.get("nextdns_profile_id")
+    # The profile may still be provisioning in the background (see
+    # create_session). Wait briefly for it to appear before giving up.
+    if not profile_id and nextdns_service.is_configured():
+        for _ in range(15):
+            await asyncio.sleep(0.2)
+            profile_id = session.get("nextdns_profile_id")
+            if profile_id:
+                break
     if not profile_id:
         raise HTTPException(
             status_code=503,
@@ -171,6 +196,7 @@ async def session_exists(room_code: str):
 
 
 @app.get("/app-event")
+@limiter.limit("60/minute")
 async def app_event_get(request: Request, room_code: str, student_name: str, app: str, event: str):
     return await _process_app_event(room_code, student_name, app, event)
 
